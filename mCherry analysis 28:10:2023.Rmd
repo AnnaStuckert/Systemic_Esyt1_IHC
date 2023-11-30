@@ -1,0 +1,173 @@
+---
+title: "Untitled"
+output:
+  pdf_document: default
+  html_document: default
+date: '2023-04-18'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(pacman)
+p_load(tidyverse, readxl)
+spinalcord <- read_excel("~/Documents/mCherry_quant/mCherry_R_quants.xlsx",sheet="Spinalcord",col_names= TRUE,col_types=NULL,na="",skip= 0)
+midbrain <- read_excel("~/Documents/mCherry_quant/mCherry_R_quants.xlsx",sheet="Midbrain",col_names= TRUE,col_types=NULL,na="",skip= 0)
+FC <- read_excel("~/Documents/mCherry_quant/mCherry_R_quants.xlsx",sheet="FC",col_names= TRUE,col_types=NULL,na="",skip= 0)
+```
+
+
+#For individual hemispheres
+```{r}
+#Calculate sum of positive neurons for each hemicord per slice, per mouse
+spinalcord_temp <- spinalcord %>%
+	group_by(Mouse_number, left_right, Slice_N) %>%
+  summarise(positive_N = sum(positive_N)) %>% 
+  arrange(Mouse_number,Slice_N)
+
+#Calculate sum of positive neurons for each MB hemisphere per slice, per mouse
+midbrain_temp <- midbrain %>%
+	group_by(Mouse_number, left_right, Slice_N) %>%
+  summarise(positive_N = sum(positive_N)) %>% 
+  arrange(Mouse_number,Slice_N)
+
+#Calculate sum of positive neurons for each FC hemisphere per slice, per mouse
+FC_temp <- FC %>%
+	group_by(Mouse_number, left_right, Slice_N) %>%
+  summarise(positive_N = sum(positive_N)) %>% 
+  arrange(Mouse_number,Slice_N)
+
+spinalcord_temp$section <- "Spinalcord"
+midbrain_temp$section <- "Midbrain"
+FC_temp$section <- "Somatosensory cortex"
+
+sc_mb_fc_combined <- rbind(spinalcord_temp,midbrain_temp, FC_temp)
+sc_mb_fc_combined$section <- as.factor(sc_mb_fc_combined$section)
+
+
+#setwd("~/Desktop/")
+#write.xlsx(sc_mb_fc_combined, file = #"sc_mb_fc_combined.xlsx")
+#p_load(openxlsx)
+```
+
+
+```{r}
+#Calculate sum of positive neurons for each hemicord per slice, per mouse
+spinalcord_sum <- spinalcord_temp %>%
+	group_by(Mouse_number, section) %>%
+  summarise(positive_N = mean(positive_N)) %>% 
+  arrange(Mouse_number)
+
+#Calculate sum of positive neurons for each MB hemisphere per slice, per mouse
+midbrain_sum <- midbrain_temp %>%
+	group_by(Mouse_number, section) %>%
+  summarise(positive_N = mean(positive_N)) %>% 
+  arrange(Mouse_number)
+
+#Calculate sum of positive neurons for each FC hemisphere per slice, per mouse
+FC_sum <- FC_temp %>%
+	group_by(Mouse_number, section) %>%
+  summarise(positive_N = mean(positive_N)) %>% 
+  arrange(Mouse_number)
+```
+
+
+
+```{r}
+spinalcord_sum$Mouse_number <- as.factor(spinalcord_sum$Mouse_number)
+midbrain_sum$Mouse_number <- as.factor(midbrain_sum$Mouse_number)
+FC_sum$Mouse_number <- as.factor(FC_sum$Mouse_number)
+
+#combine data sets
+ReplicateAverages <- rbind(spinalcord_sum,midbrain_sum, FC_sum)
+ReplicateAverages$section <- as.factor(ReplicateAverages$section)
+
+#by(ReplicateAverages$positive_N, ReplicateAverages$section, shapiro.test)
+
+```
+
+#Repeated measures ANOVA
+```{r}
+# https://rpkgs.datanovia.com/rstatix/reference/anova_test.html
+
+sc_mb_fc_combined$Mouse_number <- as.factor(sc_mb_fc_combined$Mouse_number)
+
+#ReplicateAverages <- ReplicateAverages %>% ungroup
+
+ReplicateAverages$section <- factor(ReplicateAverages$section, levels = c("Spinalcord","Midbrain","Somatosensory cortex"))
+
+
+#for getting an anova object that can be used for post-hoc
+p_load(afex)
+aov_anova <- aov_car(positive_N ~section+ Error(Mouse_number /section), data=ReplicateAverages)
+summary(aov_anova)
+
+
+
+p_load(rstatix)
+
+ReplicateAverages<- ReplicateAverages %>% 
+  ungroup()
+res_aov <- ReplicateAverages %>% anova_test(positive_N ~ section + Error(Mouse_number/(section)))
+
+res_aov
+ReplicateAverages$Mouse_number
+
+#post-hoc
+p_load(emmeans)
+ph<-emmeans(aov_anova, pairwise ~ section, conf.level = 0.95)
+ph
+confint(ph)  #for confidence intervals
+
+test(ph) # for p values
+
+```
+
+plot
+
+```{r}
+
+
+#p_load(ggpubr)
+
+cbbPalette <- c("#fcfdbf", "#feca8d", "#D67236", "#f1605d", "#9e2f7f", "#440f76")
+#cbbPalette <- plasma(6)
+
+
+ReplicateAverages$section <- factor(ReplicateAverages$section, levels = c("Somatosensory cortex","Midbrain","Spinalcord"))
+sc_mb_fc_combined$section <- factor(sc_mb_fc_combined$section, levels = c("Somatosensory cortex","Midbrain","Spinalcord"))
+
+
+p_load(ggbeeswarm, ggsignif)
+ggplot(sc_mb_fc_combined, aes(x=section,y=positive_N))+
+  geom_beeswarm(data=ReplicateAverages, size=2.5, aes(color=Mouse_number))+
+geom_dotplot(aes(fill=Mouse_number, color=Mouse_number),binaxis='y',  binwidth=1,
+               method="histodot", stackratio=1, dotsize=0.5,
+               stackgroups = TRUE, stackdir = "down", position = position_nudge(x=-.1))+
+  scale_fill_manual(values=cbbPalette)+
+  scale_colour_manual(values=cbbPalette)+
+  ylab("Number of mCherry+ neurons per hemisection")+
+  xlab("Brain area")+
+  geom_signif(comparisons = list(c("Somatosensory cortex", "Midbrain")),
+              map_signif_level = TRUE,
+              y_position=32,
+              annotations = c("ns"))+
+    geom_signif(comparisons = list(c("Somatosensory cortex", "Spinalcord")),
+              map_signif_level = TRUE,
+              y_position=34,
+              annotations = c("**"))+
+    geom_signif(comparisons = list(c("Spinalcord", "Midbrain")),
+              map_signif_level = TRUE,
+              y_position=30,
+              annotations = c("**"))+
+  geom_crossbar(stat = "summary",fun=mean, width=0.2, fatten=1.5) +
+  geom_errorbar(data=ReplicateAverages, stat="summary", fun.data=mean_se, width = 0.1, position = "dodge")+
+  theme(text = element_text(size=13))
+  ylim(0,36)
+
+```
+
+
+
